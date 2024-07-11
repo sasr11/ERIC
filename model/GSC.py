@@ -1,7 +1,7 @@
 from distutils.command.config import config
 from platform import node
 from turtle import forward
-from gpustat import print_gpustat
+# from gpustat import print_gpustat
 import torch
 import torch.nn as nn
 from torch_geometric.nn import GCNConv, GINConv, GATConv
@@ -27,7 +27,7 @@ class GSC(nn.Module):
         gnn_enc                         = self.config['gnn_encoder']
         self.filters                    = self.config['gnn_filters']
         self.num_filter                 = len(self.filters)
-        self.use_ssl                    = self.config.get('use_ssl', False)
+        self.use_ssl                    = self.config.get('use_ssl', False)  # True
 
 
         if self.config['fuse_type']     == 'stack':
@@ -201,8 +201,8 @@ class GSC(nn.Module):
             conv_source_1       = self.convolutional_pass_level(self.gnn_list[i], edge_index_1, conv_source_1)  # 一个
             
             conv_source_2       = self.convolutional_pass_level(self.gnn_list[i], edge_index_2, conv_source_2)
-            if self.config['deepsets']: 
-                if self.config.get('inner_mlp', True):
+            if self.config['deepsets']:  # True
+                if self.config.get('inner_mlp', True): # True
                     deepsets_inner_1 = self.act_inner(self.mlp_list_inner[i](conv_source_1)) # [1147, 64]
                     deepsets_inner_2 = self.act_inner(self.mlp_list_inner[i](conv_source_2))
 
@@ -212,7 +212,7 @@ class GSC(nn.Module):
                 deepsets_outer_1     = self.deepsets_outer(batch_1, deepsets_inner_1,i)
                 deepsets_outer_2     = self.deepsets_outer(batch_2, deepsets_inner_2,i)
 
-                if self.config['fuse_type']=='cat':
+                if self.config['fuse_type']=='cat': # True
                     diff_rep         = torch.exp(-torch.pow(deepsets_outer_1 - deepsets_outer_2, 2)) if i == 0 else torch.cat((diff_rep, torch.exp(-torch.pow(deepsets_outer_1 - deepsets_outer_2,2))), dim = 1)  
                 elif self.config['fuse_type']=='stack':  # (128, 3, 1, 64)  batch_size = 128  channel  = num_filters, size= 1*64
                     diff_rep         = torch.abs(deepsets_outer_1 - deepsets_outer_2).unsqueeze(1) if i == 0 else torch.cat((diff_rep, torch.abs(deepsets_outer_1 - deepsets_outer_2).unsqueeze(1)), dim=1)   # (128,3,64)
@@ -229,8 +229,10 @@ class GSC(nn.Module):
         L_cl = 0
         if not self.training:
             self.use_ssl = False
-        if self.use_ssl:
-            if self.config['use_deepsets']:
+        else: self.use_ssl = True
+        
+        if False:
+            if self.config['use_deepsets']: # True
                 L_cl = self.GCL_model(batch_1, batch_2, cat_node_embeddings_1, cat_node_embeddings_2, g1 = cat_global_embedding_1, g2 = cat_global_embedding_2) * self.gamma
             else:
                 L_cl = self.GCL_model(batch_1, batch_2, cat_node_embeddings_1, cat_node_embeddings_2) * self.gamma
@@ -255,8 +257,8 @@ class GSC(nn.Module):
 
         score = torch.sigmoid(self.score_layer(score_rep)).view(-1)
             
-        if self.config.get('use_sim', False):
-            if self.config.get('output_comb', False):
+        if self.config.get('use_sim', False): # True
+            if self.config.get('output_comb', False): # True
                 comb_score = self.alpha * score + self.beta * sim_score
                 return comb_score, L_cl
             else:
@@ -290,7 +292,7 @@ class GCL(nn.Module):
     def forward(self, batch_1, batch_2, z1, z2, g1 = None, g2 = None):
 
         if not self.use_deepsets:
-            g1       = global_add_pool(z1, batch_1)
+            g1       = global_add_pool(z1, batch_1)  # num_graphs * d，batch和num_graphs等价
             g2       = global_add_pool(z2, batch_2)
 
         num_graphs_1 = g1.shape[0]

@@ -1,0 +1,95 @@
+
+代码结果：
+main.py
+    -运行参数：parser
+    -模型参数：config
+    -dataset = load_data(args, custom)  # 返回一个加载了运行配置的DatasetLocal类
+    -dataset.load(config)  # 根据模型配置加载数据
+    -print_config(config)  # 输出配置
+    for run_id in range(config['multirun']):  # 模型训练
+        -main(args, config, logger, run_id, dataset)  # 模型运行
+            T = Trainer(config=config, args= args, logger= logger)  # 根据参数创建训练器
+            for epoch in range(1,51):  # 50轮
+                batches = dataset.create_batches_all(config)  # 获取一个DataLoader，共176400（420*420）个图对
+                for batch_pair in batches:  # 每次取128个图对
+                    * batch_pair
+                    data = dataset.transform_batch(batch_pair, config)  # 数据格式转换
+                    * data
+                    model, loss = T.train(data, model, loss_func, optimizer, target)  # 得到损失函数
+                ...T.evaluation(...)  # 用验证集测试一下, 420*140=58800
+                        保存各个标准（mse、p10等）最好的模型参数，共5个
+            ...T.evaluation(...)  # 测试集进行评估(420+140)*140=78400，共5次，每个标准选5次里最好的
+        -test_results...  # 保存实验结果
+        -save_model...  # 保存模型
+
+
+-已改进：
+1、create_batches() -> create_batches_all(), 每次获取所有图对，420*420
+2、epoch从30000改到50
+3、每个epoch都进行了测试420*140=58800
+-需改进：
+无
+-问题：
+1、原模型29000轮后的1000轮并没有使用AReg
+
+实验结果
+1、2024-07-10_11-31-39
+说明：50轮只有第一轮使用了正则化
+2、2024-07-10_14-29-49
+说明：50轮只有第一轮使用了正则化
+3、2024-07-10_16-55-47
+说明：50轮都不使用正则化
+
+**************** MODEL CONFIGURATION ****************
+NTN_layers               -->   1
+activation               -->   relu      
+batch_size               -->   128       
+dataset_name             -->   AIDS700nef
+deepsets                 -->   True
+deepsets_inner_act       -->   relu
+deepsets_outer_act       -->   relu
+dropout                  -->   0.0
+epochs                   -->   30000
+feat_norm                -->   False
+fuse_type                -->   cat
+gnn_encoder              -->   GIN
+gnn_filters              -->   [64, 64, 32, 16]
+inner_mlp                -->   True
+inner_mlp_layers         -->   1
+iter_val_every           -->   10
+iter_val_start           -->   29000
+lr                       -->   0.001
+lr_scheduler             -->   False
+measure                  -->   JSD
+mlp_score_layer          -->   2
+model_name               -->   GSC_GNN
+monitor                  -->   mse
+multi_contrast           -->   False
+multilabel               -->   False
+multirun                 -->   1
+num_layers               -->   2
+optimizer                -->   Adam
+outer_mlp_layers         -->   1
+output_comb              -->   True
+patience                 -->   -1
+pooling                  -->   add
+recache                  -->   False
+reduction                -->   2
+save_best                -->   True
+save_best_all            -->   True
+scale                    -->   1
+seed                     -->   -1
+sep                      -->   False
+synth                    -->   False
+tensor_neurons           -->   16
+use_bn                   -->   False
+use_deepsets             -->   False
+use_ff                   -->   False
+use_mlp_score            -->   True
+use_sim                  -->   True
+use_ssl                  -->   True
+use_val                  -->   True
+val_batch_size           -->   512
+val_ratio                -->   0.25
+weight_decay             -->   0.0
+**************** MODEL CONFIGURATION ****************

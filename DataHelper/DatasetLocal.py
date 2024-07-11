@@ -160,6 +160,16 @@ class DatasetLocal(dataset):
         )
         
         return list(zip(source_loader, target_loader))
+    
+    def create_batches_all(self, config):
+        datalist = [[i, j] for i in self.training_graphs for j in self.training_graphs]
+        source_loader = DataLoader(
+            datalist,
+            shuffle=True,
+            batch_size=config['batch_size'], 
+            num_workers = config.get('num_works', 0))
+        del datalist
+        return source_loader
 
     def transform_batch(self, batch, config):
         """
