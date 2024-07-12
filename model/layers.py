@@ -41,7 +41,7 @@ class MLPLayers(nn.Module):
                 use_act = False
                 out = n_out
             modules.append(nn.Linear(n_hid, out))
-            if use_bn:
+            if use_bn:  # False
                 modules.append(nn.BatchNorm1d(out)) 
             if use_act:
                 modules.append(nn.ReLU())

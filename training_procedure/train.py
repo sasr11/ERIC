@@ -15,7 +15,7 @@ def train(self, graph_batch, model, loss_func, optimizer, target, dataset = None
         prediction, loss_cl       = model(graph_batch)
         loss                      = loss_func(prediction, target) if not use_ssl else loss_func(prediction, target)+loss_cl
         loss.backward()
-        if self.config.get('clip_grad', False):
+        if self.config.get('clip_grad', False):  # False
             nn.utils.clip_grad_norm_(model.parameters(), 1)
         # else:
         #     prediction_diff, prediction_sim = model(graph_batch)

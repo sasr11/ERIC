@@ -22,6 +22,69 @@ main.py
         -test_results...  # 保存实验结果
         -save_model...  # 保存模型
 
+GSC模型
+    -setup_layers()
+        self.gnn_list             # 共4层GIN：29-64、64-64、64-32、32-16
+        self.mlp_list_inner       # 共4层MLP：64-64、64-64、32-32、16-16
+        self.mlp_list_outer       # 同上
+        self.NTN                  # 共1层NTN：16-1
+        self.conv_stack           # 共1层：176-88
+        self.GCL_model            # GCL：64+64+32+16=176
+    -forward()
+        4层GIN后得到的嵌入：
+            diff_rep                  # [num_graphs, 64+64+32+16], 每层图级嵌入间的差异(exp(-(g1-g2)^2))，用于得出score
+            cat_node_embeddings_1     # [num_nodes, 64+64+32+16], 用于AReg
+            cat_node_embeddings_2     # [num_nodes, 64+64+32+16], 用于AReg
+            cat_global_embedding_1    # [num_graphs, 64+64+32+16], 用于AReg
+            cat_global_embedding_2    # [num_graphs, 64+64+32+16], 用于AReg
+            deepsets_outer_1          # [num_graphs, 16]GIN最后一层的图级嵌入
+            deepsets_outer_2          # [num_graphs, 16]GIN最后一层的图级嵌入
+        计算AReg损失
+            L_cl = self.GCL_model(batch_1, batch_2, cat_node_embeddings_1, cat_node_embeddings_2, g1 = cat_global_embedding_1, g2 = cat_global_embedding_2) * self.gamma
+        计算NTN
+            sim_rep = self.NTN(deepsets_outer_1, deepsets_outer_2)
+        计算score
+            score_rep = self.conv_stack(diff_rep).squeeze()
+        
+GNN:
+    for i in range(self.num_filter)
+        gnn_list[i]                             -> conv_source_1        [num_nodes, d]
+        gnn_list[i]                             -> conv_source_2        [num_nodes, d]
+        Relu(mlp_list_inner[i](conv_source_1))  -> deepsets_inner_1     [num_nodes, d]
+        Relu(mlp_list_inner[i](conv_source_2))  -> deepsets_inner_2     [num_nodes, d]
+        add(deepsets_inner_1)                   -> deepsets_outer_1     [num_graphs, d]
+        add(deepsets_inner_2)                   -> deepsets_outer_2     [num_graphs, d]
+        cat                                     -> diff_rep                  
+                                                -> cat_node_embeddings_1     
+                                                -> cat_node_embeddings_2     
+                                                -> cat_global_embedding_1    
+                                                -> cat_global_embedding_2
+NTN:
+    NTN(deepsets_outer_1, deepsets_outer_2) -> sim_rep              [num_graphs, 16]
+    sigmoid(score_sim_layer(sim_rep))       -> sim_score            [num_graphs]
+score:
+    conv_stack(diff_rep)                    -> score_rep            [num_graphs, 176/88]
+    sigmoid(score_layer(score_rep))         -> score                [num_graphs]
+
+
+
+mlp_list_inner[i]:
+    Linear(d,d)
+score_sim_layer:
+    Linear(d,d)
+    ReLU()
+    Linear(d,1)
+score_layer:
+    dim = 64+64+32+16
+    Linear(dim, dim/2)
+    ReLU()
+    Dropout(0.0)
+    Linear(dim/2, dim/2)
+    Dropout(0.0)
+    Tanh()
+        
+
+
 
 -已改进：
 1、create_batches() -> create_batches_all(), 每次获取所有图对，420*420
@@ -39,6 +102,8 @@ main.py
 说明：50轮只有第一轮使用了正则化
 3、2024-07-10_16-55-47
 说明：50轮都不使用正则化
+4、2024-07-11_15-03-52
+说明：50轮都使用正则化
 
 **************** MODEL CONFIGURATION ****************
 NTN_layers               -->   1
