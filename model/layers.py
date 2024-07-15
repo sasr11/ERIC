@@ -223,3 +223,67 @@ class FF(nn.Module):
 
     def forward(self, x):
         return self.block(x) + self.linear_shortcut(x)
+
+
+class GedMatrixModule(torch.nn.Module):
+    """
+    GED matrix module.
+    d is the size of input feature;
+    k is the size of hidden layer.
+
+    Input: n1 * d, n2 * d
+    step 1 matmul: (n1 * d) matmul (k * d * d) matmul (n2 * d).t() -> k * n1 * n2
+    step 2 mlp(k, 2k, k, 1): k * n1 * n2 -> (n1n2) * k -> (n1n2) * 2k -> (n1n2) * k -> (n1n2) * 1 -> n1 * n2
+    Output: n1 * n2
+    """
+    def __init__(self, d, k):
+        """
+        :param args: Arguments object.
+        """
+        super(GedMatrixModule, self).__init__()
+
+        self.d = d
+        self.k = k
+        self.init_weight_matrix()
+        self.init_mlp()
+
+    def init_weight_matrix(self):
+        """
+        Define and initilize a weight matrix of size (k, d, d).
+        """
+        self.weight_matrix = torch.nn.Parameter(torch.Tensor(self.k, self.d, self.d))
+        torch.nn.init.xavier_uniform_(self.weight_matrix)
+
+    def init_mlp(self):
+        """
+        Define a mlp: k -> 2*k -> k -> 1
+        """
+        k = self.k
+        layers = []
+
+        layers.append(torch.nn.Linear(k, k * 2))
+        layers.append(torch.nn.ReLU())
+        layers.append(torch.nn.Linear(k * 2, k))
+        layers.append(torch.nn.ReLU())
+        layers.append(torch.nn.Linear(k, 1))
+        # layers.append(torch.nn.Sigmoid())
+
+        self.mlp = torch.nn.Sequential(*layers)
+
+    def forward(self, embedding_1, embedding_2):
+        """
+        Making a forward propagation pass to create a similar matrix.
+        :param embedding_1: GCN(graph1) of size (n1, d)
+        :param embedding_2: GCN(graph2) of size (n2, d)
+        :return result: a similar matrix of size (n1, n2)
+        """
+        n1, d1 = embedding_1.shape
+        n2, d2 = embedding_2.shape
+        assert d1 == self.d == d2
+
+        matrix = torch.matmul(embedding_1, self.weight_matrix)
+        matrix = torch.matmul(matrix, embedding_2.t())
+        matrix = matrix.reshape(self.k, -1).t()
+        matrix = self.mlp(matrix)
+
+        return matrix.reshape(n1, n2)

@@ -8,13 +8,13 @@ import torch.nn as nn
 from torch_geometric.nn import GCNConv, GINConv, GATConv
 import torch.nn.functional as F   
 from torch_geometric.nn.glob import global_add_pool, global_mean_pool
-from model.layers import AttentionModule, MLPLayers, TensorNetworkModule, FF
+from model.layers import *
 from utils.gan_losses import get_negative_expectation, get_positive_expectation
 from collections import OrderedDict, defaultdict
 import numpy as np
 
 
-class GSC(nn.Module):
+class GSC_0(nn.Module):
     def __init__(self, config, n_feat):
         super(GSC, self).__init__()
         self.config                     = config
@@ -274,7 +274,311 @@ class GSC(nn.Module):
                 return (score + sim_score)/2 , L_cl
         else:
             return score , L_cl
+        
+
+class GSC(nn.Module):
+    def __init__(self, config, n_feat):
+        super(GSC, self).__init__()
+        self.config                     = config
+        self.n_feat                     = n_feat
+        self.setup_layers()
+        self.setup_score_layer()
+        if config['dataset_name']== 'IMDBMulti':
+            self.scale_init()
+
+    def setup_layers(self):
+        gnn_enc                         = self.config['gnn_encoder']
+        self.filters                    = self.config['gnn_filters']
+        self.num_filter                 = len(self.filters)  # 4
+        self.use_ssl                    = self.config.get('use_ssl', False)  # True
+
+        self.gnn_list                   = nn.ModuleList()
+        self.mlp_list_inner             = nn.ModuleList()  
+        self.mlp_list_outer             = nn.ModuleList()  
+        self.NTN_list                   = nn.ModuleList()
+
+        if gnn_enc                    == 'GIN':  # 29-64-64-32-16
+            self.gnn_list.append(GINConv(torch.nn.Sequential(
+                torch.nn.Linear(self.n_feat, self.filters[0]),
+                torch.nn.ReLU(),
+                torch.nn.Linear(self.filters[0], self.filters[0]),
+                torch.nn.BatchNorm1d(self.filters[0]),
+            ),eps=True))
+
+            for i in range(self.num_filter-1):
+                self.gnn_list.append(GINConv(torch.nn.Sequential(
+                torch.nn.Linear(self.filters[i],self.filters[i+1]),
+                torch.nn.ReLU(),
+                torch.nn.Linear(self.filters[i+1], self.filters[i+1]),
+                torch.nn.BatchNorm1d(self.filters[i+1]),
+            ), eps=True))
+        else:
+            raise NotImplementedError("Unknown GNN-Operator.")
+        # if not self.config['multi_deepsets']:
+        if self.config['deepsets']:  # True
+            for i in range(self.num_filter):
+                if self.config['inner_mlp']:
+                    if self.config.get('inner_mlp_layers', 1) == 1:  # True
+                        self.mlp_list_inner.append(MLPLayers(self.filters[i], self.filters[i],None, num_layers=1,use_bn=False))
+                    else:
+                        self.mlp_list_inner.append(MLPLayers(self.filters[i], self.filters[i], self.filters[i], num_layers=self.config['inner_mlp_layers'], use_bn=False))
                 
+                if self.config.get('outer_mlp_layers', 1)     == 1:  # True
+                    self.mlp_list_outer.append(MLPLayers(self.filters[i], self.filters[i],None, num_layers=1,use_bn=False))
+                else:
+                    self.mlp_list_outer.append(MLPLayers(self.filters[i], self.filters[i], self.filters[i], num_layers=self.config['outer_mlp_layers'], use_bn=False))
+                
+                self.act_inner                 = getattr(F, self.config.get('deepsets_inner_act', 'relu'))  # 设置激活函数为relu
+                self.act_outer                 = getattr(F, self.config.get('deepsets_outer_act', 'relu'))
+            if self.config['use_sim'] and self.config['NTN_layers'] == 1:  # True
+                self.NTN                       = TensorNetworkModule(self.config, self.filters[self.num_filter-1])
+            # 融合所有层的输出
+            if self.config['fuse_type']        == 'cat':  # True
+                self.channel_dim               = sum(self.filters)  # 所有GNN层的输出维度的总和
+                self.reduction                 = self.config['reduction']  # 2
+                self.conv_stack                = nn.Sequential(
+                                                                nn.Linear(self.channel_dim, self.channel_dim // self.reduction),
+                                                                nn.ReLU(),
+                                                                nn.Dropout(p = self.config['dropout']),
+                                                                nn.Linear(self.channel_dim // self.reduction, (self.channel_dim // self.reduction) ),
+                                                                nn.Dropout(p = self.config['dropout']),
+                                                                nn.Tanh(),
+                                                            )  # 176-88-88
+            else:
+                raise RuntimeError(
+                    'unsupported fuse type') 
+        if self.use_ssl:  # True
+            self.GCL_model                      = GCL(self.config, sum(self.filters))
+            self.gamma                          = nn.Parameter(torch.Tensor(1)) 
+        
+        # my, cost
+        self.costMatrix = GedMatrixModule(self.filters[-1], 16)  # 16-32
+        # my, LRL
+        self.transform1 = torch.nn.Linear(self.filters[-1], 32)  # 16-32
+        self.relu1 = torch.nn.ReLU()
+        self.transform2 = torch.nn.Linear(32, 32)
+        
+    def setup_score_layer(self):
+        if self.config['deepsets']:
+            # score
+            if self.config['fuse_type']                  == 'cat':  # True
+                self.score_layer                         = nn.Sequential(nn.Linear((self.channel_dim // self.reduction) , 16),
+                                                                        nn.ReLU(),
+                                                                        nn.Linear(16 , 1))
+            # NTN
+            if self.config['use_sim']:
+                self.score_sim_layer                 = nn.Sequential(nn.Linear(self.config['tensor_neurons'], self.config['tensor_neurons']),
+                                                                    nn.ReLU(),
+                                                                    nn.Linear(self.config['tensor_neurons'], 1))
+
+        if self.config.get('output_comb', False):  # True
+            self.alpha                                   = nn.Parameter(torch.Tensor(1))
+            self.beta                                    = nn.Parameter(torch.Tensor(1))
+
+    def scale_init(self):
+        print("scale_init")
+        nn.init.zeros_(self.gamma)
+        nn.init.zeros_(self.alpha)
+        nn.init.zeros_(self.beta)
+
+    def convolutional_pass_level(self, enc, edge_index, x):
+        feat                                             = enc(x, edge_index)
+        feat                                             = F.relu(feat)
+        feat                                             = F.dropout(feat, p = self.config['dropout'], training=self.training)
+        return feat
+
+    def deepsets_outer(self, batch, feat, filter_idx, size = None):
+        size                                             = (batch[-1].item() + 1 if size is None else size)   # 一个batch中的图数
+        # 按add的方式聚合每个图的节点嵌入形成图级嵌入，一共128个
+        pool                                             = global_add_pool(feat, batch, size=size) if self.config['pooling']=='add' else global_mean_pool(feat, batch, size=size)
+        return self.act_outer(self.mlp_list_outer[filter_idx](pool))
+    
+    def log_sinkhorn_norm(self, log_alpha: torch.Tensor, n_iter: int =20):
+        """
+        行列归一化
+        Args:
+            log_alpha: 矩阵n*n
+            n_iter: 迭代次数. Defaults to 20.
+        """
+        for _ in range(n_iter):
+            log_alpha = log_alpha - torch.logsumexp(log_alpha, -1, keepdim=True)
+            log_alpha = log_alpha - torch.logsumexp(log_alpha, -2, keepdim=True)
+        return log_alpha.exp()
+    
+    def gumbel_sinkhorn(self, log_alpha, tau = 1.0, n_iter = 20, noise = False, bias = None, weight = 0.5):
+        """
+        Args:
+            log_alpha: 图对节点或边的相似度矩阵n*n
+            tau: 温度系数，控制结果平滑度. Defaults to 1.0.
+            n_iter: sinkhorn算法迭代次数. Defaults to 20.
+            noise: 是否添加有偏置的噪声. Defaults to True.
+            bias: 偏置
+            weight: 偏置的权重
+        Output:
+            sampled_perm_mat: 采样结果
+        """
+        uniform_noise = torch.rand_like(log_alpha)
+        gumbel_noise = -torch.log(-torch.log(uniform_noise+1e-20)+1e-20)
+        if noise:
+            # gumbel_noise = torch.mul(gumbel_noise, (1 + bias * weight))
+            gumbel_noise = gumbel_noise + bias*0.2
+        log_alpha = (log_alpha + gumbel_noise)/tau
+        sampled_perm_mat = self.log_sinkhorn_norm(log_alpha, n_iter)
+        return sampled_perm_mat
+    
+    def separate_features(self, f1, f2, batch_1, batch_2):
+        # 获取批次中图的数量
+        num_graphs = batch_1.max().item() + 1
+        # 创建一个列表来存储分离的特征
+        separated_features_1 = [[] for _ in range(num_graphs)]
+        separated_features_2 = [[] for _ in range(num_graphs)]
+        # 将特征根据batch分离
+        for i in range(len(batch_1)):
+            graph_index = batch_1[i].item()
+            separated_features_1[graph_index].append(f1[i].tolist())
+        for i in range(len(batch_2)):
+            graph_index = batch_2[i].item()
+            separated_features_2[graph_index].append(f2[i].tolist())
+        # 将列表中的特征转换为张量
+        separated_features_1 = [torch.tensor(features, dtype=torch.float).cuda() for features in separated_features_1]
+        separated_features_2 = [torch.tensor(features, dtype=torch.float).cuda() for features in separated_features_2]
+        
+        return separated_features_1, separated_features_2  # [tensor(n,d), tensor(n,d),...]
+    
+    def Cross(self, f1_list, f2_list):
+        
+        """通过嵌入计算相似度矩阵
+        Args:
+            
+        Returns:
+            _type_: 相似度矩阵(通过mask消除填充向量的影响, 同时因为之后会和置换矩阵相乘, 置换矩阵不用再mask)
+            取值范围(-无穷，+无穷)
+        """
+        cost_matrix_list = []
+        for f1, f2 in zip(f1_list, f2_list):
+            n1 = f1.shape[0]
+            n2 = f2.shape[0]
+            max_size = 10
+            cost_matrix = self.costMatrix(f1, f2)  # [max_size, max_size]
+            # 填充成10*10的矩阵
+            cost_matrix = F.pad(cost_matrix, pad=(0,max_size-n2,0,max_size-n1))  # 左右上下
+            cost_matrix_list.append(cost_matrix)
+            # print(n1, n2)
+            # print(cost_matrix.shape)
+            # print(cost_matrix)
+            # print("-----------------------------------------")
+            # time.sleep(2)
+        return torch.stack(cost_matrix_list)  # batch*n*n
+    
+    def LRL(self, f1_list, f2_list):
+        """经过LRL和gumbel-sinkhorn得到置换矩阵
+        Args:
+            abstract_features_1 (_type_): 图1节点嵌入 [n1, 32]
+            abstract_features_2 (_type_): 图2节点嵌入 [n2, 32]
+        Returns:
+            _type_: 相似度矩阵
+        """
+        alignment_list = []
+        for f1, f2 in zip(f1_list, f2_list):
+            n1 = f1.shape[0]
+            n2 = f2.shape[0]
+            max_size = 10
+            # LRL
+            emb_1 = self.transform2(self.relu1(self.transform1(f1)))  # [n1, 64]
+            emb_2 = self.transform2(self.relu1(self.transform1(f2)))  # [n2, 64]
+            sinkhorn_input = torch.matmul(emb_1, emb_2.permute(1,0))  # [max_size, max_size]
+            sinkhorn_input = F.pad(sinkhorn_input, pad=(0,max_size-n2,0,max_size-n1))  # 左右上下
+            # gs
+            transport_plan = self.gumbel_sinkhorn(sinkhorn_input, tau=0.1)  # [max_size, max_size]
+            alignment_list.append(transport_plan)
+            # print(n1, n2)
+            # print(sinkhorn_input.shape)
+            # print(sinkhorn_input)
+            # print(transport_plan)
+            # print("-----------------------------------------")
+            # time.sleep(2)
+        # 虽然填充了0向量，但经过gumbel后，mask的部分仍会有值，需要cost matrix方面进行mask
+        return torch.stack(alignment_list)  # batch*n*n
+    
+    def forward(self,data):
+        edge_index_1            = data['g1'].edge_index.cuda()
+        edge_index_2            = data['g2'].edge_index.cuda()
+        features_1              = data["g1"].x.cuda()
+        features_2              = data["g2"].x.cuda()
+        batch_1                 = (
+                                    data["g1"].batch.cuda()
+                                    if hasattr(data["g1"], "batch")
+                                    else torch.tensor((), dtype=torch.long).new_zeros(data["g1"].num_nodes).cuda()
+                                    )
+        batch_2                 = (
+                                    data["g2"].batch.cuda()
+                                    if hasattr(data["g2"], "batch")
+                                    else torch.tensor((), dtype=torch.long).new_zeros(data["g2"].num_nodes).cuda()
+                                    )
+        
+        conv_source_1           = torch.clone(features_1)
+        conv_source_2           = torch.clone(features_2)
+        # 训练模型or评估模式
+        if not self.training:
+            self.use_ssl = False
+        else: self.use_ssl = True
+        # 分层图卷积
+        for i in range(self.num_filter):  # 分层contrast
+            conv_source_1       = self.convolutional_pass_level(self.gnn_list[i], edge_index_1, conv_source_1)
+            conv_source_2       = self.convolutional_pass_level(self.gnn_list[i], edge_index_2, conv_source_2)
+            if self.config['deepsets']:  # True
+                # 生成图级嵌入
+                if self.config.get('inner_mlp', True): # True
+                    deepsets_inner_1 = self.act_inner(self.mlp_list_inner[i](conv_source_1)) # [1147, 64]
+                    deepsets_inner_2 = self.act_inner(self.mlp_list_inner[i](conv_source_2))
+                else:
+                    deepsets_inner_1 = self.act_inner(conv_source_1)
+                    deepsets_inner_2 = self.act_inner(conv_source_2)
+                deepsets_outer_1     = self.deepsets_outer(batch_1, deepsets_inner_1,i)  # [128, d]  图级嵌入
+                deepsets_outer_2     = self.deepsets_outer(batch_2, deepsets_inner_2,i)
+                # 通过cat的方式融合每层图级嵌入间的差异
+                if self.config['fuse_type']=='cat': # True
+                    diff_rep         = torch.exp(-torch.pow(deepsets_outer_1 - deepsets_outer_2, 2)) if i == 0 else torch.cat((diff_rep, torch.exp(-torch.pow(deepsets_outer_1 - deepsets_outer_2,2))), dim = 1)  
+                
+                if self.use_ssl:
+                    cat_node_embeddings_1   = conv_source_1 if i == 0 else torch.cat((cat_node_embeddings_1, conv_source_1), dim = 1)
+                    cat_node_embeddings_2   = conv_source_2 if i == 0 else torch.cat((cat_node_embeddings_2, conv_source_2), dim = 1)
+                    cat_global_embedding_1  = deepsets_outer_1 if i == 0 else torch.cat((cat_global_embedding_1, deepsets_outer_1), dim = 1)
+                    cat_global_embedding_2  = deepsets_outer_2 if i == 0 else torch.cat((cat_global_embedding_2, deepsets_outer_2), dim = 1)
+        # AReg
+        L_cl = 0
+        if self.use_ssl:
+            if self.config['use_deepsets']: # False
+                L_cl = self.GCL_model(batch_1, batch_2, cat_node_embeddings_1, cat_node_embeddings_2, g1 = cat_global_embedding_1, g2 = cat_global_embedding_2) * self.gamma
+            else:
+                L_cl = self.GCL_model(batch_1, batch_2, cat_node_embeddings_1, cat_node_embeddings_2) * self.gamma
+                # print("L_cl=", L_cl.item(), "  gamma=",self.gamma.item())
+        # 计算NTN
+        if self.config['use_sim'] and self.config['NTN_layers']==1:
+            sim_rep = self.NTN(deepsets_outer_1, deepsets_outer_2)
+        if self.config['use_sim']:
+            sim_score = torch.sigmoid(self.score_sim_layer(sim_rep).squeeze())
+        
+        # my, 计算score
+        f1_list, f2_list = self.separate_features(conv_source_1, conv_source_2, batch_1, batch_2)
+        cost_matrix = self.Cross(f1_list, f2_list)  # batch*max*max
+        node_alignment = self.LRL(f1_list, f2_list)  # batch*max*max
+        soft_matrix = node_alignment * cost_matrix  # batch*max*max，逐元素相乘
+        score = torch.sigmoid(torch.sum(soft_matrix, dim=(1, 2)))  # torch.Size([batch])
+        
+        # 计算score
+        # score_rep = self.conv_stack(diff_rep).squeeze()  # (128,88)
+        # score = torch.sigmoid(self.score_layer(score_rep)).view(-1)
+        
+        if self.config.get('use_sim', False): # True
+            if self.config.get('output_comb', False): # True
+                comb_score = self.alpha * score + self.beta * sim_score
+                return comb_score, L_cl
+            else:
+                return (score + sim_score)/2 , L_cl
+        else:
+            return score , L_cl
+    
 class GCL(nn.Module):
 
     def __init__(self, config, embedding_dim):
@@ -339,7 +643,7 @@ class GCL(nn.Module):
         else:
             L_1              = get_positive_expectation(self_sim_1,  self.measure, average=False).sum()- get_positive_expectation(cross_sim_12,self.measure, average=False).sum()
             L_2              = get_positive_expectation(self_sim_2,  self.measure, average=False).sum()- get_positive_expectation(cross_sim_21, self.measure, average=False).sum()
-            print("\nL_1=", L_1.item(), "L_2=", L_2.item())
+            # print("\nL_1=", L_1.item(), "L_2=", L_2.item())
             return           L_1 - L_2
 
 
