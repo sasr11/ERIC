@@ -7,6 +7,8 @@ The final version of the code is to be further cleaned.
 ## Requirements
 
 ```
+star虚拟环境名==zhj2
+python==3.8
 torch==2.1.0
 torch_scatter==2.1.2
 torch_sparse==0.6.18

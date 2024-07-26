@@ -48,14 +48,14 @@ GSC模型
         
 GNN:
     for i in range(self.num_filter)
-        gnn_list[i]                             -> conv_source_1        [num_nodes, d]
+        gnn_list[i]                             -> conv_source_1        [num_nodes, filter[i]]
         gnn_list[i]                             -> conv_source_2        [num_nodes, d]
         Relu(mlp_list_inner[i](conv_source_1))  -> deepsets_inner_1     [num_nodes, d]
         Relu(mlp_list_inner[i](conv_source_2))  -> deepsets_inner_2     [num_nodes, d]
         add(deepsets_inner_1)                   -> deepsets_outer_1     [num_graphs, d]
         add(deepsets_inner_2)                   -> deepsets_outer_2     [num_graphs, d]
-        cat                                     -> diff_rep                  
-                                                -> cat_node_embeddings_1     
+        cat                                     -> diff_rep             [num_graphs, 176]     
+                                                -> cat_node_embeddings_1     [num_nodes, 176]
                                                 -> cat_node_embeddings_2     
                                                 -> cat_global_embedding_1    
                                                 -> cat_global_embedding_2
@@ -89,52 +89,15 @@ score_layer:
 -已改进：
 1、create_batches() -> create_batches_all(), 每次获取所有图对，420*420
 2、epoch从30000改到50
-3、每个epoch都进行了测试420*140=58800
+3、每个epoch都进行了验证420*140=58800
 -需改进：
 无
 -问题：
 1、原模型29000轮后的1000轮并没有使用AReg
 
-实验结果
-1、2024-07-10_11-31-39
-说明：50轮只有第一轮使用了正则化
-mse: 0.0013957483742932431
-rho: 0.9034613246827438
-tau: 0.7451035924208682
-prec_at_10: 0.6885714285714285
-prec_at_20: 0.7564285714285715
 
-2、2024-07-10_14-29-49
-说明：50轮只有第一轮使用了正则化
-mse: 0.001417391060522039
-rho: 0.9007067580650736
-tau: 0.7421839290277829
-prec_at_10: 0.6878571428571428
-prec_at_20: 0.7414285714285715
 
-3、2024-07-10_16-55-47
-说明：50轮都不使用正则化
-mse: 0.001451973561270433
-rho: 0.896414724614842
-tau: 0.7363007922310247
-prec_at_10: 0.6728571428571429
-prec_at_20: 0.7460714285714285
 
-4、2024-07-11_15-03-52
-说明：50轮都使用正则化
-mse: 0.001491616596164711
-rho: 0.8947561877247243
-tau: 0.732786590485926
-prec_at_10: 0.6571428571428571
-prec_at_20: 0.7328571428571428
-
-5、2024-07-12_15-02-55
-说明：同上
-mse: 0.0014096979958278938
-rho: 0.8999847011499349
-tau: 0.7415138184075062
-prec_at_10: 0.6878571428571427
-prec_at_20: 0.7528571428571429
 
 
 

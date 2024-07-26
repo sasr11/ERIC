@@ -41,9 +41,9 @@ def main(args, config, logger: Logger, run_id: int, dataset: DatasetLocal):
     b_epoch                          = 0
     if config['save_best']:  # True  结果保存路径
         PATH_MODEL                   = os.path.join(os.path.join(os.getcwd(),'model_saved'), args.dataset, datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))    
-    for epoch in range(1,51):  # 运行50轮
+    for epoch in range(1,26):  # 运行50轮
         if not custom:  # True
-            batches                  = dataset.create_batches_all(config)   # 所有图对420*420
+            batches                  = dataset.create_batches_all(config)   # 所有图对88410
         main_index                   = 0
         loss_sum                     = 0
         loss                         = 0  # 每个图对的平均损失
@@ -51,7 +51,7 @@ def main(args, config, logger: Logger, run_id: int, dataset: DatasetLocal):
         with tqdm(total=len(batches.dataset), unit="graph_pairs", leave=True, desc="Epoch",
                   file=sys.stdout) as pbar:
             for batch_pair in batches:  # 遍历所有图对，每次128个图对
-                data                     = dataset.transform_batch(batch_pair, config)
+                data                     = dataset.transform_batch(batch_pair, config)  # 获取图对的GED值
                 target                   = data["target"].cuda()
                 model, batch_total_loss  = T.train(data, model, loss_func, optimizer, target)   # loss是batch总损失
                 
@@ -63,14 +63,15 @@ def main(args, config, logger: Logger, run_id: int, dataset: DatasetLocal):
                 index                    = int(main_index / batch_size)  # 第几个batch
                 pbar.update(batch_size)
                 pbar.set_description(
-                    "Epoch_{}: loss={} - Batch_{}: loss={}".format(epoch, loss, index, batch_loss))                               
+                    "Epoch_{}: loss={} - Batch_{}: loss={}".format(epoch, round(loss, 6), index, round(batch_loss,6)))                               
             # loss_list.append(loss)
 
         # 验证集测试
         if config['use_val']:  # True
             model.eval()
             val_mse, val_rho, val_tau, val_prec_at_10, val_prec_at_20 = T.evaluation(dataset.val_graphs, dataset.training_graphs, model, loss_func, dataset, validation=True)
-            logger.log("Validation Epoch = {}, MSE = {}(e-3), rho = {}, tau={}, prec_10 = {}, prec_20 = {}\n".format(epoch, val_mse*1000, val_rho, val_tau, val_prec_at_10, val_prec_at_20))
+            logger.log("Validation Epoch = {}, loss={}, MSE={}(e-3), rho={}, tau={}, prec_10={}, prec_20={}\n".format(epoch, 
+                    round(loss,6), round(val_mse*1000,4), round(val_rho,4), round(val_tau,4), round(val_prec_at_10,4), round(val_prec_at_20,4)))
             if not config.get('save_best_all', False):  # False
                 if best_mse_metric                >= val_mse:
                     best_mse_metric               = val_mse
@@ -95,7 +96,8 @@ def main(args, config, logger: Logger, run_id: int, dataset: DatasetLocal):
                 best_val_epoch                    = b_epoch
             # 保存验证结果
             with open(osp.join(PATH_MODEL, 'result.txt'), 'a') as f:
-                f.write("Validation Epoch = {}, MSE = {}(e-3), rho = {}, tau={}, prec_10 = {}, prec_20 = {}\n\n".format(epoch, val_mse*1000, val_rho, val_tau, val_prec_at_10, val_prec_at_20))
+                f.write("Val Epoch={}, loss={}, MSE={}(e-3), rho={}, tau={}, prec_10={}, prec_20={}\n\n".format(epoch, 
+                    round(loss,6), round(val_mse*1000,4), round(val_rho,4), round(val_tau,4), round(val_prec_at_10,4), round(val_prec_at_20,4)))
         # pbar.set_postfix_str(postfix_str)
     
     # 测试集进行评估
@@ -112,29 +114,36 @@ def main(args, config, logger: Logger, run_id: int, dataset: DatasetLocal):
     # 训练最佳结果的字典
     best_val_result = {
         'best_val_epoch': best_val_epoch,
-        'best_val_mse'  : best_val_mse,
-        'best_val_tau'  : best_val_tau,
-        'best_val_rho'  : best_val_rho,
-        'best_val_p10'  : best_val_p10,
-        'best_val_p20'  : best_val_p20
+        'best_val_mse(10^-3)'  : round(best_val_mse*1000,4),
+        'best_val_tau'  : round(best_val_tau,4),
+        'best_val_rho'  : round(best_val_rho,4),
+        'best_val_p@10'  : round(best_val_p10,4),
+        'best_val_p@20'  : round(best_val_p20,4)
+    }
+    test_results = {
+        'mse(10^-3)': round(test_mse*1000,4),
+        'rho': round(test_rho,4),
+        'tau': round(test_tau,4),
+        'p@10': round(test_prec_at_10,4),
+        'p@20': round(test_prec_at_20,4)
     }
     
     # 最后一轮的模型
     # 训练时的最佳轮次，以mse为准
     # 每个标准（mse、rho、tau、p10、p20）的测试集结果
     # 最后一轮的平均损失、结果保存路径、最佳结果的字典（epoch、mse、rho、tau、p10、p20）
-    return model, best_val_epoch , test_mse, test_rho, test_tau, test_prec_at_10, test_prec_at_20, loss, PATH_MODEL, best_val_result
+    return model, best_val_epoch , test_results, loss, PATH_MODEL, best_val_result
 
 
 def print_evaluation(model_error,rho,tau,prec_at_10,prec_at_20):
     """
     Printing the error rates.
     """
-    print("mse(10^-3): "     + str(round(model_error * 1000, 5)))
-    print("rho: "            + str(round(rho, 5)))
-    print("tau: "            + str(round(tau, 5)))
-    print("p@10: "           + str(round(prec_at_10, 5)))
-    print("p@20: "           + str(round(prec_at_20, 5)))
+    print("mse(10^-3): "     + str(model_error))
+    print("rho: "            + str(rho))
+    print("tau: "            + str(tau))
+    print("p@10: "           + str(prec_at_10))
+    print("p@20: "           + str(prec_at_20))
 
 
 def map_location(storage, loc):
@@ -201,7 +210,7 @@ if __name__ == "__main__":
         # 测试集运行
         model_mse, test_rho, test_tau, \
             test_prec_at_10, test_prec_at_20 = T.evaluation(dataset.testing_graphs, dataset.trainval_graphs, pretrain_model, torch.nn.MSELoss(), dataset, config)
-        print_evaluation(model_mse, test_rho, test_tau, test_prec_at_10, test_prec_at_20)
+        print_evaluation(round(model_mse*1000, 3), round(test_rho, 3), round(test_tau, 3), round(test_prec_at_10, 3), round(test_prec_at_20, 3))
     else:  # 模型训练
         print("total graphs = {}"                                   .format(dataset.num_graphs))
         print("train_gs.len={} and val_gs.len={} and test_gs.len={}".format(dataset.num_train_graphs, dataset.num_val_graphs, dataset.num_test_graphs))
@@ -213,22 +222,18 @@ if __name__ == "__main__":
             # logger.log ("Seed set to %d." % seeds[run_id])
 
             # 模型训练
-            model, best_metric_epoch ,report_mse_test, report_rho_test,report_tau_test,report_prec_at_10_test,report_prec_at_20_test, loss,PATH_MODEL, best_val_results = main(args, config, logger, run_id, dataset)
+            model, best_metric_epoch, test_results, loss, PATH_MODEL, best_val_results = main(args, config, logger, run_id, dataset)
 
+            # 打印结果
             logger.add_line()
             print("\nTrain Best Result:")
-            print_evaluation(best_val_results["best_val_mse"], best_val_results["best_val_rho"], best_val_results["best_val_tau"], best_val_results["best_val_p10"], best_val_results["best_val_p20"])
+            print("best_val_epoch:", best_val_results["best_val_epoch"])
+            print_evaluation(best_val_results["best_val_mse(10^-3)"], best_val_results["best_val_rho"], best_val_results["best_val_tau"], best_val_results["best_val_p@10"], best_val_results["best_val_p@20"])
             print("\nTest Result:")
-            print_evaluation(report_mse_test,report_rho_test,report_tau_test,report_prec_at_10_test,report_prec_at_20_test)
+            print_evaluation(test_results["mse(10^-3)"], test_results["rho"], test_results["tau"], test_results["p@10"], test_results["p@20"])
+            
             
             # 保存实验结果
-            test_results = {
-                'mse'       : report_mse_test,
-                'rho'       : report_rho_test,
-                'tau'       : report_tau_test,
-                'prec_at_10': report_prec_at_10_test,
-                'prec_at_20': report_prec_at_20_test
-            }
             with open(osp.join(PATH_MODEL, 'result.txt'), 'a') as f:
                 f.write('\n')
                 for k, v       in   best_val_results.items():

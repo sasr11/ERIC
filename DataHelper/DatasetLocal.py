@@ -9,6 +9,8 @@ from torch_geometric.utils import degree
 from torch_geometric.loader import DataLoader
 import numpy as np
 from .CustomDataset import GEDDataset_Custom
+import time
+import itertools
 
 class DatasetLocal(dataset):
     data = None
@@ -61,19 +63,22 @@ class DatasetLocal(dataset):
                 self.dataset_source_folder_path + "/{}".format(self.dataset_name),
                 self.dataset_name,
                 train=True) 
-        self.trainval_nged_matrix    = self.trainval_graphs.norm_ged
-        self.trainval_ged_matrix     = self.trainval_graphs.ged
+        self.trainval_nged_matrix    = self.trainval_graphs.norm_ged  # 700*700
+        self.trainval_ged_matrix     = self.trainval_graphs.ged  # 700*700
         self.real_trainval_data_size = self.trainval_nged_matrix.size(0)   # 700
         self.num_graphs              = len(self.trainval_graphs) + len(self.testing_graphs)
         self.num_train_graphs        = len(self.training_graphs)
         self.num_val_graphs          = len(self.val_graphs)
         self.num_test_graphs         = len(self.testing_graphs)
-
+        # print(self.training_graphs[0])  # Data(edge_index=[2, 18], i=[1], x=[10, 29], num_nodes=10)
+        # print(self.training_graphs[0].edge_index)  # 2*18
+        # print(self.training_graphs[0].x)  # 10*29
+        # time.sleep(10)
 
         # if config['use_val']:
         #     self.validation_triples = self.load_val_train_pairs()
 
-        if config['synth']:
+        if config['synth']:  # False
             self.synth_data_1, self.synth_data_2, _, synth_nged_matrix = gen_pairs(
                 self.trainval_graphs.shuffle()[:500], 0, 3
             )
@@ -162,7 +167,9 @@ class DatasetLocal(dataset):
         return list(zip(source_loader, target_loader))
     
     def create_batches_all(self, config):
-        datalist = [[i, j] for i in self.training_graphs for j in self.training_graphs]
+        
+        datalist = list(itertools.combinations_with_replacement(self.training_graphs, 2))  # (1+420)*210=88410
+        # datalist = [[i, j] for i in self.training_graphs for j in self.training_graphs]  # 420*420=176400
         source_loader = DataLoader(
             datalist,
             shuffle=True,

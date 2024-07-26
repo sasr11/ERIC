@@ -351,12 +351,22 @@ class GSC(nn.Module):
             self.GCL_model                      = GCL(self.config, sum(self.filters))
             self.gamma                          = nn.Parameter(torch.Tensor(1)) 
         
-        # my, cost
+        # # my, cost
         self.costMatrix = GedMatrixModule(self.filters[-1], 16)  # 16-32
-        # my, LRL
+        # # my, LRL
         self.transform1 = torch.nn.Linear(self.filters[-1], 32)  # 16-32
         self.relu1 = torch.nn.ReLU()
         self.transform2 = torch.nn.Linear(32, 32)
+        # my, 欧式距离
+        # self.Eu = nn.Sequential(
+        #     nn.Linear(self.filters[-1], self.filters[-1] // 2),
+        #     nn.ReLU(),
+        #     nn.Dropout(p = self.config['dropout']),
+        #     nn.Linear(self.filters[-1] // 2, self.filters[-1] // 2),
+        #     nn.Dropout(p = self.config['dropout']),
+        #     nn.Tanh(),
+        # )  # 16-8-8
+        # self.lamda = nn.Parameter(torch.Tensor(1)) 
         
     def setup_score_layer(self):
         if self.config['deepsets']:
@@ -427,6 +437,17 @@ class GSC(nn.Module):
         return sampled_perm_mat
     
     def separate_features(self, f1, f2, batch_1, batch_2):
+        """根据batch中的节点索引，分离节点向量
+
+        Args:
+            f1 (_type_): [num_nodes, d]
+            f2 (_type_): [num_nodes, d]
+            batch_1 (_type_): [num_nodes]  [0,0,0,1,1,2,2,....]
+            batch_2 (_type_): [num_nodes]
+
+        Returns:
+            _type_: _description_
+        """
         # 获取批次中图的数量
         num_graphs = batch_1.max().item() + 1
         # 创建一个列表来存储分离的特征
@@ -443,15 +464,16 @@ class GSC(nn.Module):
         separated_features_1 = [torch.tensor(features, dtype=torch.float).cuda() for features in separated_features_1]
         separated_features_2 = [torch.tensor(features, dtype=torch.float).cuda() for features in separated_features_2]
         
-        return separated_features_1, separated_features_2  # [tensor(n,d), tensor(n,d),...]
+        return separated_features_1, separated_features_2  # [tensor(n1,d), tensor(n2,d),...]
     
     def Cross(self, f1_list, f2_list):
-        
         """通过嵌入计算相似度矩阵
         Args:
-            
+            Args:
+            abstract_features_1 (_type_): 图1节点嵌入 [n1, 16]
+            abstract_features_2 (_type_): 图2节点嵌入 [n2, 16]
         Returns:
-            _type_: 相似度矩阵(通过mask消除填充向量的影响, 同时因为之后会和置换矩阵相乘, 置换矩阵不用再mask)
+            _type_: 堆叠的Cost矩阵(通过mask消除填充向量的影响, 同时因为之后会和置换矩阵相乘, 置换矩阵不用再mask)
             取值范围(-无穷，+无穷)
         """
         cost_matrix_list = []
@@ -459,7 +481,7 @@ class GSC(nn.Module):
             n1 = f1.shape[0]
             n2 = f2.shape[0]
             max_size = 10
-            cost_matrix = self.costMatrix(f1, f2)  # [max_size, max_size]
+            cost_matrix = self.costMatrix(f1, f2)  # [n1, n2]
             # 填充成10*10的矩阵
             cost_matrix = F.pad(cost_matrix, pad=(0,max_size-n2,0,max_size-n1))  # 左右上下
             cost_matrix_list.append(cost_matrix)
@@ -470,35 +492,109 @@ class GSC(nn.Module):
             # time.sleep(2)
         return torch.stack(cost_matrix_list)  # batch*n*n
     
+    def generate_CostMatrix(self, f1_list, f2_list):
+        """_summary_
+
+        Args:
+            f1_list (_type_): _description_
+            f2_list (_type_): _description_
+
+        Returns:
+            _type_: _description_
+        """
+        cost_matrix_list = []
+        for f1, f2 in zip(f1_list, f2_list):
+            n1 = f1.shape[0]
+            n2 = f2.shape[0]
+            max_size = 10
+            max_n = max(n1, n2)
+            f1 = F.pad(f1, pad=(0,0,0,max_n-n1))  # [max_n, 16]
+            f2 = F.pad(f2, pad=(0,0,0,max_n-n2))  # [max_n, 16]
+            # 计算欧式距离
+            f1 = f1.unsqueeze(1)  # 扩展为 (max_n, 1, 16)
+            f2 = f2.unsqueeze(0)  # 扩展为 (1, max_n, 16)
+            dist = f1 - f2  # 广播后进行计算，形状为 (max_n, max_n, 16)
+            dist = dist ** 2
+            input = dist.view(-1, 16)  # 形状变为 (max_n*max_n, 16)
+            output = self.Eu(input)  # (max_n*max_n, 8)
+            output = output.view(max_n, max_n, 8)  # 将张量重塑为 (max_n, max_n, 8)
+            cost_matrix = torch.sigmoid(output.sum(dim=2))  # (max_n, max_n)
+            # 填充成10*10的矩阵
+            cost_matrix = F.pad(cost_matrix, pad=(0,max_size-max_n,0,max_size-max_n))  # 左右上下, 
+            cost_matrix_list.append(cost_matrix)
+            # print(n1, n2)
+            # print(cost_matrix.shape)
+            # print(cost_matrix)
+            # print("-----------------------------------------")
+            # time.sleep(2)
+        return torch.stack(cost_matrix_list)  # batch*n*n
+        
     def LRL(self, f1_list, f2_list):
         """经过LRL和gumbel-sinkhorn得到置换矩阵
         Args:
-            abstract_features_1 (_type_): 图1节点嵌入 [n1, 32]
-            abstract_features_2 (_type_): 图2节点嵌入 [n2, 32]
+            abstract_features_1 (_type_): 图1节点嵌入 [n1, 16]
+            abstract_features_2 (_type_): 图2节点嵌入 [n2, 16]
         Returns:
-            _type_: 相似度矩阵
+            _type_: 堆叠的Alignment矩阵、堆叠的Cost矩阵
         """
         alignment_list = []
         for f1, f2 in zip(f1_list, f2_list):
             n1 = f1.shape[0]
             n2 = f2.shape[0]
+            max_n = max(n1, n2)
             max_size = 10
             # LRL
-            emb_1 = self.transform2(self.relu1(self.transform1(f1)))  # [n1, 64]
-            emb_2 = self.transform2(self.relu1(self.transform1(f2)))  # [n2, 64]
-            sinkhorn_input = torch.matmul(emb_1, emb_2.permute(1,0))  # [max_size, max_size]
-            sinkhorn_input = F.pad(sinkhorn_input, pad=(0,max_size-n2,0,max_size-n1))  # 左右上下
+            emb_1 = self.transform2(self.relu1(self.transform1(f1)))  # [n1, 32]
+            emb_2 = self.transform2(self.relu1(self.transform1(f2)))  # [n2, 32]
             # gs
-            transport_plan = self.gumbel_sinkhorn(sinkhorn_input, tau=0.1)  # [max_size, max_size]
+            sinkhorn_input = torch.matmul(emb_1, emb_2.permute(1,0))  # [n1, n2]
+            sinkhorn_input = F.pad(sinkhorn_input, pad=(0,max_n-n2,0,max_n-n1))  # [max_n, max_n], 左右上下
+            transport_plan = self.gumbel_sinkhorn(sinkhorn_input, tau=0.1)  # [max_n, max_n]
+            # 填充成10*10的张量
+            transport_plan = F.pad(transport_plan, pad=(0,max_size-max_n,0,max_size-max_n))  # [10, 10]
             alignment_list.append(transport_plan)
             # print(n1, n2)
             # print(sinkhorn_input.shape)
             # print(sinkhorn_input)
+            # print(transport_plan.shape)
             # print(transport_plan)
             # print("-----------------------------------------")
             # time.sleep(2)
         # 虽然填充了0向量，但经过gumbel后，mask的部分仍会有值，需要cost matrix方面进行mask
         return torch.stack(alignment_list)  # batch*n*n
+    
+    def LRL_Cross(self, f1_list, f2_list):
+        """通过节点嵌入通过LRL处理节点嵌入, 通过Cross生成Cost矩阵, 用Cost矩阵通过gs得到Alignment矩阵
+        Args:
+            abstract_features_1 (_type_): 图1节点嵌入 [n1, 16]
+            abstract_features_2 (_type_): 图2节点嵌入 [n2, 16]
+        Returns:
+            _type_: 堆叠的Alignment矩阵
+        """
+        alignment_list = []
+        cost_matrix_list = []
+        for f1, f2 in zip(f1_list, f2_list):
+            n1 = f1.shape[0]
+            n2 = f2.shape[0]
+            max_n = max(n1, n2)
+            max_size = 10
+            # LRL
+            emb_1 = self.transform2(self.relu1(self.transform1(f1)))  # [n1, 32]
+            emb_2 = self.transform2(self.relu1(self.transform1(f2)))  # [n2, 32]
+            # Cross
+            cost_matrix = self.costMatrix(emb_1, emb_2)  # [n1, n2]  注意costMatrix的参数
+            # gs
+            sinkhorn_input = F.pad(cost_matrix, pad=(0,max_n-n2,0,max_n-n1))  # [max_n, max_n]
+            transport_plan = self.gumbel_sinkhorn(sinkhorn_input, tau=0.1)  # [max_n, max_n]
+            # 填充
+            transport_plan = F.pad(transport_plan, pad=(0,max_size-max_n,0,max_size-max_n))  # [10, 10]
+            cost_matrix = F.pad(torch.exp(-torch.pow(cost_matrix, 2)), pad=(0,max_size-n2,0,max_size-n1))  # [10,10]
+            alignment_list.append(transport_plan)
+            cost_matrix_list.append(cost_matrix)
+            # print(cost_matrix)
+            # print("-------------------------------------------------------")
+            # time.sleep(1)
+        return torch.stack(alignment_list), torch.stack(cost_matrix_list)  # batch*n*n
     
     def forward(self,data):
         edge_index_1            = data['g1'].edge_index.cuda()
@@ -522,6 +618,7 @@ class GSC(nn.Module):
         if not self.training:
             self.use_ssl = False
         else: self.use_ssl = True
+        self.use_ssl = False
         # 分层图卷积
         for i in range(self.num_filter):  # 分层contrast
             conv_source_1       = self.convolutional_pass_level(self.gnn_list[i], edge_index_1, conv_source_1)
@@ -540,9 +637,10 @@ class GSC(nn.Module):
                 if self.config['fuse_type']=='cat': # True
                     diff_rep         = torch.exp(-torch.pow(deepsets_outer_1 - deepsets_outer_2, 2)) if i == 0 else torch.cat((diff_rep, torch.exp(-torch.pow(deepsets_outer_1 - deepsets_outer_2,2))), dim = 1)  
                 
+                
+                cat_node_embeddings_1   = conv_source_1 if i == 0 else torch.cat((cat_node_embeddings_1, conv_source_1), dim = 1)
+                cat_node_embeddings_2   = conv_source_2 if i == 0 else torch.cat((cat_node_embeddings_2, conv_source_2), dim = 1)
                 if self.use_ssl:
-                    cat_node_embeddings_1   = conv_source_1 if i == 0 else torch.cat((cat_node_embeddings_1, conv_source_1), dim = 1)
-                    cat_node_embeddings_2   = conv_source_2 if i == 0 else torch.cat((cat_node_embeddings_2, conv_source_2), dim = 1)
                     cat_global_embedding_1  = deepsets_outer_1 if i == 0 else torch.cat((cat_global_embedding_1, deepsets_outer_1), dim = 1)
                     cat_global_embedding_2  = deepsets_outer_2 if i == 0 else torch.cat((cat_global_embedding_2, deepsets_outer_2), dim = 1)
         # AReg
@@ -557,27 +655,33 @@ class GSC(nn.Module):
         if self.config['use_sim'] and self.config['NTN_layers']==1:
             sim_rep = self.NTN(deepsets_outer_1, deepsets_outer_2)
         if self.config['use_sim']:
-            sim_score = torch.sigmoid(self.score_sim_layer(sim_rep).squeeze())
+            # sim_score = torch.sigmoid(self.score_sim_layer(sim_rep).squeeze())
+            sim_score = self.score_sim_layer(sim_rep).squeeze()
         
         # my, 计算score
-        f1_list, f2_list = self.separate_features(conv_source_1, conv_source_2, batch_1, batch_2)
-        cost_matrix = self.Cross(f1_list, f2_list)  # batch*max*max
-        node_alignment = self.LRL(f1_list, f2_list)  # batch*max*max
-        soft_matrix = node_alignment * cost_matrix  # batch*max*max，逐元素相乘
-        score = torch.sigmoid(torch.sum(soft_matrix, dim=(1, 2)))  # torch.Size([batch])
+        # f1_list, f2_list = self.separate_features(cat_node_embeddings_1, cat_node_embeddings_2, batch_1, batch_2)
+        # f1_list, f2_list = self.separate_features(conv_source_1, conv_source_2, batch_1, batch_2)
+        # cost_matrix = self.Cross(f1_list, f2_list)  # batch*max*max
+        # cost_matrix = self.generate_CostMatrix(f1_list, f2_list)  # batch*max*max
+        # node_alignment = self.LRL(f1_list, f2_list)  # batch*max*max
+        # node_alignment, cost_matrix = self.LRL_Cross(f1_list, f2_list)
+        # soft_matrix = node_alignment * cost_matrix  # batch*max*max，逐元素相乘
+        # score = torch.sigmoid(torch.sum(soft_matrix, dim=(1, 2)))  # torch.Size([batch])
+        # score = torch.sum(soft_matrix, dim=(1, 2))  # torch.Size([batch])
         
         # 计算score
-        # score_rep = self.conv_stack(diff_rep).squeeze()  # (128,88)
+        score_rep = self.conv_stack(diff_rep).squeeze()  # (128,88)
         # score = torch.sigmoid(self.score_layer(score_rep)).view(-1)
+        score = self.score_layer(score_rep).view(-1)
         
         if self.config.get('use_sim', False): # True
             if self.config.get('output_comb', False): # True
                 comb_score = self.alpha * score + self.beta * sim_score
+                # comb_score = torch.sigmoid(score + sim_score)
+                print("\n",self.alpha, self.beta)
+                time.sleep(0.2)
+                # comb_score = self.beta * sim_score
                 return comb_score, L_cl
-            else:
-                return (score + sim_score)/2 , L_cl
-        else:
-            return score , L_cl
     
 class GCL(nn.Module):
 

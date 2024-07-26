@@ -234,7 +234,7 @@ def save_model(config, dataset_name, model):
     
     PATH_GSC                          = os.path.join(PATH_MODEL, config['model_name'] + "_" + dataset_name+'_checkpoint.pth' )
     torch.save(model.state_dict()     , PATH_GSC)
-    print("Model Saved")
+    print("\nModel Saved")
 
 
 def save_best_val_model(config, dataset_name, model, PATH_MODEL):

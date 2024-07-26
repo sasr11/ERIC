@@ -1,0 +1,63 @@
+Val Epoch=1, loss=0.00698, MSE=3.973(e-3), rho=0.7843, tau=0.6095, prec_10=0.3414, prec_20=0.4354
+
+Val Epoch=2, loss=0.004218, MSE=3.0881(e-3), rho=0.818, tau=0.6418, prec_10=0.3636, prec_20=0.4707
+
+Val Epoch=3, loss=0.003884, MSE=3.3976(e-3), rho=0.8227, tau=0.6477, prec_10=0.4093, prec_20=0.4821
+
+Val Epoch=4, loss=0.003655, MSE=2.7686(e-3), rho=0.834, tau=0.661, prec_10=0.4214, prec_20=0.4936
+
+Val Epoch=5, loss=0.00336, MSE=2.8127(e-3), rho=0.8326, tau=0.6596, prec_10=0.4129, prec_20=0.5086
+
+Val Epoch=6, loss=0.003183, MSE=2.6646(e-3), rho=0.8432, tau=0.6717, prec_10=0.4236, prec_20=0.5039
+
+Val Epoch=7, loss=0.003113, MSE=2.6698(e-3), rho=0.8358, tau=0.6657, prec_10=0.4293, prec_20=0.5114
+
+Val Epoch=8, loss=0.003022, MSE=2.8236(e-3), rho=0.8378, tau=0.6659, prec_10=0.4221, prec_20=0.505
+
+Val Epoch=9, loss=0.002912, MSE=2.5449(e-3), rho=0.8505, tau=0.6807, prec_10=0.4507, prec_20=0.5318
+
+Val Epoch=10, loss=0.002896, MSE=2.545(e-3), rho=0.8411, tau=0.6703, prec_10=0.4429, prec_20=0.5286
+
+Val Epoch=11, loss=0.002853, MSE=2.7056(e-3), rho=0.8476, tau=0.6777, prec_10=0.4621, prec_20=0.5318
+
+Val Epoch=12, loss=0.002756, MSE=2.5941(e-3), rho=0.839, tau=0.6677, prec_10=0.4636, prec_20=0.5268
+
+Val Epoch=13, loss=0.002691, MSE=2.497(e-3), rho=0.8453, tau=0.674, prec_10=0.475, prec_20=0.5411
+
+Val Epoch=14, loss=0.00267, MSE=2.5654(e-3), rho=0.848, tau=0.6781, prec_10=0.4779, prec_20=0.5446
+
+Val Epoch=15, loss=0.002636, MSE=2.4339(e-3), rho=0.8391, tau=0.6685, prec_10=0.4664, prec_20=0.5382
+
+Val Epoch=16, loss=0.00258, MSE=2.3669(e-3), rho=0.8494, tau=0.6789, prec_10=0.4507, prec_20=0.5382
+
+Val Epoch=17, loss=0.002517, MSE=2.4433(e-3), rho=0.8499, tau=0.6805, prec_10=0.4886, prec_20=0.5582
+
+Val Epoch=18, loss=0.002467, MSE=2.4515(e-3), rho=0.849, tau=0.6792, prec_10=0.475, prec_20=0.5575
+
+Val Epoch=19, loss=0.002455, MSE=2.4424(e-3), rho=0.8507, tau=0.6811, prec_10=0.4743, prec_20=0.5475
+
+Val Epoch=20, loss=0.002426, MSE=2.5614(e-3), rho=0.8362, tau=0.6663, prec_10=0.4743, prec_20=0.5354
+
+Val Epoch=21, loss=0.002408, MSE=2.5925(e-3), rho=0.842, tau=0.671, prec_10=0.4764, prec_20=0.5471
+
+Val Epoch=22, loss=0.002383, MSE=2.2797(e-3), rho=0.8541, tau=0.6845, prec_10=0.5029, prec_20=0.5582
+
+Val Epoch=23, loss=0.002328, MSE=2.3876(e-3), rho=0.8544, tau=0.6844, prec_10=0.5007, prec_20=0.5643
+
+Val Epoch=24, loss=0.002359, MSE=2.3691(e-3), rho=0.8497, tau=0.6804, prec_10=0.4671, prec_20=0.5464
+
+Val Epoch=25, loss=0.002321, MSE=2.4446(e-3), rho=0.8492, tau=0.6792, prec_10=0.4793, prec_20=0.5446
+
+
+best_val_epoch: 22
+best_val_mse(10^-3): 2.28
+best_val_tau: 0.6845
+best_val_rho: 0.8544
+best_val_p@10: 0.5029
+best_val_p@20: 0.5643
+
+mse(10^-3): 2.395
+rho: 0.8393
+tau: 0.6665
+p@10: 0.4879
+p@20: 0.5875
